@@ -94,6 +94,11 @@ export interface NewsFilteringSummary {
 }
 
 export interface PortfolioResult {
+  return_basis: "historical";
+  methodology: string;
+  warnings: string[];
+  data_as_of: string | null;
+  position_cap: number | null;
   portfolio_id: string;
   generated_at: string;
   investment_amount: number;
@@ -117,7 +122,7 @@ export interface JobStatus {
 export interface NewsArticleSentiment {
   symbol: string;
   overall_sentiment: number;
-  risk_level: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "NONE";
+  risk_level: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "NONE" | "UNKNOWN";
   total_articles: number;
   summary: string;
 }

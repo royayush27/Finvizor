@@ -13,7 +13,7 @@ export default function AllocationChart({ holdings }: { holdings: StockHolding[]
           values: holdings.map((h) => h.weight),
           hovertemplate: "%{label}: %{percent}<extra></extra>",
           textinfo: "label+percent",
-          marker: { colors: ["#667eea", "#764ba2", "#f093fb", "#4c9aff", "#20c997", "#ffc107", "#fd7e14", "#dc3545", "#28a745", "#6c757d"] },
+          marker: { colors: ["#245744", "#6b8768", "#aab89a", "#b89e6c", "#637e80", "#c1bca8", "#897966", "#91a5a0", "#b9c8bb", "#657365"] },
         },
       ]}
       layout={{
@@ -21,7 +21,7 @@ export default function AllocationChart({ holdings }: { holdings: StockHolding[]
         showlegend: true,
         autosize: true,
         paper_bgcolor: "rgba(0,0,0,0)",
-        font: { color: "currentColor" },
+        font: { color: "#3d4a40" },
       }}
       useResizeHandler
       style={{ width: "100%", height: "360px" }}

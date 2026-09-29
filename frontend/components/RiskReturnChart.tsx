@@ -17,20 +17,20 @@ export default function RiskReturnChart({ holdings }: { holdings: StockHolding[]
           marker: {
             size: holdings.map((h) => Math.max(10, h.weight * 200)),
             color: holdings.map((h) => h.predicted_return ?? 0),
-            colorscale: "RdYlGn",
+            colorscale: [[0, "#b89e6c"], [1, "#245744"]],
             showscale: true,
           },
-          hovertemplate: "%{text}<br>Volatility: %{x:.1f}%<br>Expected Return: %{y:.1f}%<extra></extra>",
+          hovertemplate: "%{text}<br>Volatility: %{x:.1f}%<br>Trailing return: %{y:.1f}%<extra></extra>",
         },
       ]}
       layout={{
         margin: { t: 20, b: 40, l: 50, r: 20 },
-        xaxis: { title: "Volatility (%)" },
-        yaxis: { title: "Expected Return (%)" },
+        xaxis: { title: { text: "Volatility (%)" } },
+        yaxis: { title: { text: "Trailing return (%)" } },
         autosize: true,
         paper_bgcolor: "rgba(0,0,0,0)",
         plot_bgcolor: "rgba(0,0,0,0)",
-        font: { color: "currentColor" },
+        font: { color: "#3d4a40" },
       }}
       useResizeHandler
       style={{ width: "100%", height: "360px" }}

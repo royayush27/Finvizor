@@ -55,7 +55,7 @@ export const useWizardStore = create<WizardState>()(
       setIndustryFocus: (industries) => set({ industryFocus: industries }),
       setExcludeIndustries: (industries) => set({ excludeIndustries: industries }),
       setEsgPreference: (preference) => set({ esgPreference: preference }),
-      setQuestionnaire: (partial) => set((state) => ({ questionnaire: { ...state.questionnaire, ...partial } })),
+      setQuestionnaire: (partial) => set((state) => ({ questionnaire: { ...state.questionnaire, ...partial }, riskScore: null, riskLevel: null, riskColor: null })),
       setRiskScore: (score, level, color) => set({ riskScore: score, riskLevel: level, riskColor: color }),
       setActiveJob: (job) => set({ activeJob: job }),
       setPortfolio: (portfolio) => set({ portfolio }),
@@ -72,6 +72,6 @@ export const useWizardStore = create<WizardState>()(
           portfolio: null,
         }),
     }),
-    { name: "finvizor-wizard-state" }
+    { name: "finvizor-wizard-state", version: 2 }
   )
 );

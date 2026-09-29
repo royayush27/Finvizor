@@ -9,6 +9,7 @@ and the yfinance fallback-symbol table are carried over unchanged; the
 from __future__ import annotations
 
 import logging
+import math
 import time
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -18,6 +19,7 @@ from cachetools import TTLCache, cached
 from fredapi import Fred
 
 from app.models.schemas import EconomicIndicator
+from app.services.yf_session import get_yf_session
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +66,21 @@ _economic_cache: TTLCache = TTLCache(maxsize=8, ttl=7200)  # 2 hours, matches or
 
 
 def _metrics(current: Optional[float], previous: Optional[float], first: Optional[float], pct_std: Optional[float]):
-    change = ((current / previous) - 1) * 100 if previous else 0.0
-    ytd_change = ((current / first) - 1) * 100 if first else 0.0
-    return change, ytd_change, (pct_std * 100 if pct_std is not None else 0.0)
+    def change_from(baseline):
+        if current is None or baseline is None or baseline == 0:
+            return None
+        result = (current / baseline - 1) * 100
+        return result if math.isfinite(result) else None
+    volatility = pct_std * 100 if pct_std is not None and math.isfinite(pct_std) else None
+    return change_from(previous), change_from(first), volatility
+
+
+def _year_start_value(data, year: int) -> Optional[float]:
+    """YTD compares the latest observation with the last prior-year observation."""
+    if data.empty or data.index[-1].year != year:
+        return None
+    prior_year = data[data.index.year == year - 1]
+    return float(prior_year.iloc[-1]) if not prior_year.empty else None
 
 
 def _load_from_fred(fred_client: Fred, lookback_years: int) -> List[EconomicIndicator]:
@@ -76,13 +90,16 @@ def _load_from_fred(fred_client: Fred, lookback_years: int) -> List[EconomicIndi
 
     for series_id, name in FRED_INDICATORS.items():
         try:
-            data = fred_client.get_series(series_id, start=start_date, end=end_date)
+            data = fred_client.get_series(series_id, observation_start=start_date, observation_end=end_date)
             if data is None or data.empty:
                 logger.warning(f"No data returned for {name} ({series_id})")
                 continue
+            data = data.dropna().sort_index()
+            if data.empty:
+                continue
             current = float(data.iloc[-1])
             previous = float(data.iloc[-2]) if len(data) > 1 else None
-            first = float(data.iloc[0]) if len(data) > 0 else None
+            first = _year_start_value(data, end_date.year)
             pct_std = data.pct_change().std() if len(data) > 1 else None
             change, ytd_change, volatility = _metrics(current, previous, first, pct_std)
             results.append(
@@ -113,13 +130,15 @@ def _load_from_yfinance_fallback(lookback_years: int) -> List[EconomicIndicator]
 
     for symbol, name in YFINANCE_FALLBACK_SYMBOLS.items():
         try:
-            hist = yf.Ticker(symbol).history(start=start_date, end=end_date)
+            hist = yf.Ticker(symbol, session=get_yf_session()).history(start=start_date, end=end_date)
             if hist.empty:
                 continue
-            prices = hist["Close"]
+            prices = hist["Close"].dropna().sort_index()
+            if prices.empty:
+                continue
             current = float(prices.iloc[-1])
             previous = float(prices.iloc[-2]) if len(prices) > 1 else None
-            first = float(prices.iloc[0]) if len(prices) > 0 else None
+            first = _year_start_value(prices, end_date.year)
             pct_std = prices.pct_change().std() if len(prices) > 1 else None
             change, ytd_change, volatility = _metrics(current, previous, first, pct_std)
             results.append(

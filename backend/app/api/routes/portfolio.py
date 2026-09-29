@@ -39,7 +39,7 @@ async def export_job_csv(job_id: str) -> StreamingResponse:
 
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(["Symbol", "Name", "Sector", "Weight %", "Current Price", "Predicted Return %", "Volatility %"])
+    writer.writerow(["Symbol", "Name", "Sector", "Weight %", "Current Price", "Trailing Return %", "Volatility %"])
     for h in job.result.holdings:
         writer.writerow([h.symbol, h.name, h.sector, f"{h.weight * 100:.2f}", h.current_price, h.predicted_return, h.volatility])
     buffer.seek(0)

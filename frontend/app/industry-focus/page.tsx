@@ -29,6 +29,7 @@ export default function IndustryFocusPage() {
   }, []);
 
   function toggleFocus(key: string) {
+    setExcludeIndustries(excludeIndustries.filter((i) => i !== key));
     setIndustryFocus(industryFocus.includes(key) ? industryFocus.filter((i) => i !== key) : [...industryFocus, key]);
   }
 
@@ -41,12 +42,12 @@ export default function IndustryFocusPage() {
   return (
     <div className="flex flex-col gap-8">
       <div>
-        <h1 className="text-3xl font-bold">Industry Focus Selection</h1>
-        <p className="text-slate-500 dark:text-slate-400">Choose industries you want to focus on or avoid.</p>
+        <h1 className="text-3xl font-bold">Define your universe.</h1>
+        <p className="text-slate-500 ">Choose sectors to focus on or avoid. Leave the focus empty to consider all sectors.</p>
       </div>
 
       {loadError && (
-        <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
+        <div className="rounded-md border border-red-300 bg-red-50 px-4 py-3 text-red-700   ">
           {loadError}
         </div>
       )}
@@ -59,16 +60,17 @@ export default function IndustryFocusPage() {
             return (
               <button
                 key={industry.key}
+                aria-pressed={selected}
                 onClick={() => toggleFocus(industry.key)}
                 title={industry.description}
-                className={`rounded-xl border p-4 text-center transition-all ${
+                className={`sector-option rounded-md border p-4 transition-colors ${
                   selected
-                    ? "border-transparent bg-brand-gradient-soft text-white shadow-lg shadow-indigo-500/30"
-                    : "border-slate-200 bg-white hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
+                    ? "border-transparent bg-emerald-900 text-white  "
+                    : "border-slate-200 bg-white    "
                 }`}
               >
-                <div className="text-2xl">{industry.icon}</div>
                 <div className="mt-1 text-sm font-medium">{industry.key}</div>
+                <small className="mt-2 block text-xs opacity-75">{industry.description}</small>
               </button>
             );
           })}
@@ -77,7 +79,7 @@ export default function IndustryFocusPage() {
 
       {industryFocus.length > 0 && (
         <InfoCard title="Your Industry Focus">
-          <p className="text-sm text-slate-600 dark:text-slate-300">{industryFocus.join(", ")}</p>
+          <p className="text-sm text-slate-600 ">{industryFocus.join(", ")}</p>
         </InfoCard>
       )}
 
@@ -91,14 +93,15 @@ export default function IndustryFocusPage() {
               return (
                 <button
                   key={industry.key}
+                  aria-pressed={excluded}
                   onClick={() => toggleExclude(industry.key)}
-                  className={`rounded-full border px-3 py-1 text-sm transition-colors ${
+                  className={`rounded border px-3 py-1 text-sm transition-colors ${
                     excluded
                       ? "border-rose-500 bg-rose-500 text-white"
-                      : "border-slate-300 text-slate-600 hover:border-rose-400 dark:border-slate-700 dark:text-slate-300"
+                      : "border-slate-300 text-slate-600 hover:border-rose-400  "
                   }`}
                 >
-                  {industry.icon} {industry.key}
+                  {industry.key}
                 </button>
               );
             })}
@@ -111,14 +114,15 @@ export default function IndustryFocusPage() {
           {ESG_OPTIONS.map((option) => (
             <label
               key={option}
-              className={`flex-1 cursor-pointer rounded-xl border px-4 py-3 text-sm transition-colors ${
+              className={`flex-1 rounded-md border px-4 py-3 text-sm transition-colors ${option !== "No preference" ? "cursor-not-allowed opacity-50" : "cursor-pointer"} ${
                 esgPreference === option
-                  ? "border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300"
-                  : "border-slate-200 dark:border-slate-800"
+                  ? "border-emerald-500 bg-emerald-50 text-emerald-700  "
+                  : "border-slate-200 "
               }`}
             >
               <input
                 type="radio"
+                disabled={option !== "No preference"}
                 name="esg"
                 className="mr-2"
                 checked={esgPreference === option}
@@ -128,24 +132,22 @@ export default function IndustryFocusPage() {
             </label>
           ))}
         </div>
+        <p className="caption mt-3">ESG screening is not available yet. Verified ESG ratings are required before this filter can be applied.</p>
       </div>
 
       <div className="flex justify-center">
         <button
           onClick={() => {
-            if (industryFocus.length >= 1) {
-              router.push("/risk-assessment");
-            }
+            router.push("/risk-assessment");
           }}
-          disabled={industryFocus.length < 1}
-          className="rounded-full bg-brand-gradient-soft px-8 py-3 font-semibold text-white shadow-lg shadow-indigo-500/30 transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded bg-emerald-900 px-8 py-3 font-semibold text-white   transition-transform  disabled:cursor-not-allowed disabled:opacity-40"
         >
           Continue to Risk Assessment →
         </button>
       </div>
       {industryFocus.length < 1 && (
-        <p className="text-center text-sm text-amber-600 dark:text-amber-400">
-          Please select at least one industry focus area.
+        <p className="text-center text-sm text-amber-600 ">
+          All sectors will be considered.
         </p>
       )}
     </div>

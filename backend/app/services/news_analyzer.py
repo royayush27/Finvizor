@@ -142,7 +142,7 @@ class NewsAnalyzer:
         try:
             response = requests.get(f"{self.base_url}everything", params=params, headers=headers, timeout=10)
             if response.status_code != 200:
-                logger.warning(f"NewsAPI error for '{query}': {response.status_code} {response.text}")
+                logger.warning("NewsAPI request failed with status %s", response.status_code)
                 return []
 
             articles_data = response.json().get("articles", [])
@@ -166,7 +166,7 @@ class NewsAnalyzer:
             logger.error(f"NewsAPI request timed out for query '{query}'.")
             return []
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching news for '{query}': {e}")
+            logger.error("NewsAPI request failed (%s)", type(e).__name__)
             return []
 
     def get_stock_news(self, symbol: str, days_back: int = 30) -> List[dict]:
@@ -210,11 +210,11 @@ class NewsAnalyzer:
             text_lower = cleaned.lower()
 
             for keyword in NEGATIVE_KEYWORDS:
-                if keyword in text_lower:
+                if re.search(r"\b" + re.escape(keyword.lower()) + r"\b", text_lower):
                     negative_score += 2
                     flagged_keywords.append(keyword)
             for keyword in POSITIVE_KEYWORDS:
-                if keyword in text_lower:
+                if re.search(r"\b" + re.escape(keyword.lower()) + r"\b", text_lower):
                     positive_score += 1
 
             keyword_sentiment = (positive_score - negative_score) / 10 if (positive_score + negative_score) > 0 else 0
@@ -225,7 +225,7 @@ class NewsAnalyzer:
                 lm_score * 0.3,
                 keyword_sentiment * 0.1,
             ]
-            mean_sentiment = float(np.mean(sentiment_scores))
+            mean_sentiment = float(np.clip(np.sum(sentiment_scores), -1.0, 1.0))
             std_sentiment = float(np.std([textblob_polarity, vader_compound, lm_score, keyword_sentiment]))
 
             if mean_sentiment > 0.05:
@@ -271,7 +271,7 @@ class NewsAnalyzer:
         try:
             articles = self.get_stock_news(symbol, days_back)
             if not articles:
-                return NewsAnalysis(symbol, 0, 0, 0.0, 0.0, "NEUTRAL", "NONE", True)
+                return NewsAnalysis(symbol, 0, 0, 0.0, 0.0, "NEUTRAL", "UNKNOWN", False)
 
             results: List[SentimentResult] = []
             all_flagged: List[str] = []
@@ -288,7 +288,7 @@ class NewsAnalyzer:
                     risk_reasons.append(f"Article: '{article.get('title', '')[:50]}...' - {result.risk_level} risk")
 
             if not results:
-                return NewsAnalysis(symbol, len(articles), 0, 0.0, 0.0, "NEUTRAL", "NONE", True)
+                return NewsAnalysis(symbol, len(articles), 0, 0.0, 0.0, "NEUTRAL", "UNKNOWN", False)
 
             all_sentiments = [r.overall_sentiment for r in results]
             avg_sentiment = float(np.mean(all_sentiments))
@@ -334,11 +334,11 @@ class NewsAnalyzer:
             if progress_callback:
                 progress_callback(i + 1, len(stocks), stock.symbol)
 
-            analysis = self.analyze_stock_news(stock.symbol, days_back=60)
+            analysis = self.analyze_stock_news(stock.symbol, days_back=30)
             analysis_by_symbol[stock.symbol] = analysis
             total_articles += analysis.total_articles
 
-            if analysis.risk_level in allowed_risks and analysis.is_recommended:
+            if analysis.risk_level in allowed_risks:
                 passed.append(stock)
             else:
                 rejected.append(stock.symbol)

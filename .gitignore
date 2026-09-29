@@ -36,3 +36,5 @@ __MACOSX/
 
 # --- Misc ---
 *.log
+.artifacts/
+*.tsbuildinfo

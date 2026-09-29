@@ -8,7 +8,8 @@ import type {
   RiskScoreResponse,
 } from "./types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+// All browser requests go through Next's server-side proxy, including local previews.
+const API_BASE_URL = "";
 
 class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -19,13 +20,17 @@ class ApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
+    signal: AbortSignal.timeout(30000),
     headers: { "Content-Type": "application/json" },
     ...init,
   });
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new ApiError(response.status, body.detail ?? `Request to ${path} failed with ${response.status}`);
+    const detail = Array.isArray(body.detail)
+      ? body.detail.map((item: { msg?: string }) => item.msg ?? "Invalid input").join(" ")
+      : body.detail;
+    throw new ApiError(response.status, detail ?? `Request failed (${response.status}). Please try again.`);
   }
 
   return response.json() as Promise<T>;
@@ -67,12 +72,14 @@ export { ApiError };
 export async function pollJobUntilDone(
   jobId: string,
   onProgress: (job: JobStatus) => void,
-  { intervalMs = 1500, timeoutMs = 5 * 60 * 1000 }: { intervalMs?: number; timeoutMs?: number } = {}
+  { intervalMs = 1500, timeoutMs = 15 * 60 * 1000, signal }: { intervalMs?: number; timeoutMs?: number; signal?: AbortSignal } = {}
 ): Promise<JobStatus> {
   const start = Date.now();
   // eslint-disable-next-line no-constant-condition
   while (true) {
+    if (signal?.aborted) throw new DOMException("Polling cancelled", "AbortError");
     const job = await api.getJobStatus(jobId);
+    if (signal?.aborted) throw new DOMException("Polling cancelled", "AbortError");
     onProgress(job);
     if (job.status === "completed" || job.status === "failed") {
       return job;

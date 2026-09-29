@@ -10,8 +10,8 @@ configure_logging(settings.log_level)
 
 app = FastAPI(
     title="Finvizor API",
-    description="Portfolio construction API: ML return prediction, FRED economic data, "
-    "news sentiment filtering, and personalized portfolio generation.",
+    description="Historical portfolio research, covariance-based risk analysis, "
+    "economic data, and optional news sentiment screening.",
     version="2.0.0",
 )
 

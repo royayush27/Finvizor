@@ -13,17 +13,17 @@ export default function SectorChart({ sectorAllocation }: { sectorAllocation: Re
           type: "bar",
           x: sectors,
           y: weights,
-          marker: { color: "#667eea" },
+          marker: { color: "#245744" },
           hovertemplate: "%{x}: %{y:.1f}%<extra></extra>",
         },
       ]}
       layout={{
         margin: { t: 20, b: 80, l: 50, r: 20 },
-        yaxis: { title: "Allocation (%)" },
+        yaxis: { title: { text: "Allocation (%)" } },
         autosize: true,
         paper_bgcolor: "rgba(0,0,0,0)",
         plot_bgcolor: "rgba(0,0,0,0)",
-        font: { color: "currentColor" },
+        font: { color: "#3d4a40" },
       }}
       useResizeHandler
       style={{ width: "100%", height: "360px" }}

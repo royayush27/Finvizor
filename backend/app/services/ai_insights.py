@@ -53,9 +53,9 @@ def _build_prompt(portfolio: PortfolioResult, language: str) -> str:
         holdings_text = "\n".join(f"{h.symbol} ({h.name}) - {h.sector} - {h.weight * 100:.1f}%" for h in top_holdings)
         sector_text = "\n".join(f"{sector}: {weight * 100:.1f}%" for sector, weight in portfolio.sector_allocation.items())
         return f"""
-        Portfolio Investment Analysis Report
+        Historical Portfolio Research Report. These are historical results, not forecasts. Do not describe them as expected future returns.
 
-        This portfolio has a risk score of {portfolio.risk_score}/100, with an expected annual
+        This portfolio has a risk score of {portfolio.risk_score}/100, with a historical trailing
         return of {portfolio.expected_annual_return:.1f}% and a portfolio volatility of
         {portfolio.portfolio_volatility:.1f}%.
 
@@ -71,9 +71,9 @@ def _build_prompt(portfolio: PortfolioResult, language: str) -> str:
     holdings_text = "\n".join(f"{h.symbol} ({h.name}) - {h.sector} - {h.weight * 100:.1f}%" for h in top_holdings)
     sector_text = "\n".join(f"{sector}: {weight * 100:.1f}%" for sector, weight in portfolio.sector_allocation.items())
     return f"""
-    포트폴리오 투자 분석 보고서
+    과거 포트폴리오 분석 보고서. 미래 수익률 예측이 아닙니다.
 
-    이 포트폴리오는 리스크 점수 {portfolio.risk_score}점을 기록하며, 예상 연간 수익률은 {portfolio.expected_annual_return:.1f}%입니다.
+    이 포트폴리오는 리스크 점수 {portfolio.risk_score}점을 기록하며, 과거 수익률은 {portfolio.expected_annual_return:.1f}%입니다.
     포트폴리오의 변동성은 {portfolio.portfolio_volatility:.1f}%로 측정되었습니다.
 
     총 투자 금액은 ${portfolio.investment_amount:,.0f}이며, 다음과 같은 주요 보유 종목들로 구성되어 있습니다:

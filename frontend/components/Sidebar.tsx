@@ -1,38 +1,26 @@
 "use client";
-
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useWizardStore } from "@/lib/store";
 
 export default function Sidebar() {
-  const resetWizard = useWizardStore((s) => s.resetWizard);
-
+  const state = useWizardStore();
+  const router = useRouter();
+  const [ready, setReady] = useState(false);
+  useEffect(() => setReady(true), []);
   return (
-    <aside className="sticky top-8 flex h-fit flex-col gap-4 rounded-2xl border border-slate-200 bg-white/80 p-5 text-sm shadow-md dark:border-slate-800 dark:bg-slate-900/70">
-      <div className="rounded-xl bg-gradient-to-r from-amber-300 to-amber-400 px-4 py-2 text-center font-semibold text-amber-900 shadow">
-        9th Mirae Asset Securities AI Festival
-      </div>
-
-      <div>
-        <h5 className="mb-1 font-semibold text-slate-700 dark:text-slate-200">About</h5>
-        <p className="text-slate-500 dark:text-slate-400">
-          AI-powered portfolio construction combining a machine-learning ensemble, live FRED economic
-          data, and news-sentiment filtering, tailored to your risk profile and industry preferences.
-        </p>
-      </div>
-
-      <div>
-        <h5 className="mb-1 font-semibold text-slate-700 dark:text-slate-200">Disclaimer</h5>
-        <p className="text-slate-500 dark:text-slate-400">
-          Educational project only. Always consult a qualified financial advisor before making
-          investment decisions.
-        </p>
-      </div>
-
-      <button
-        onClick={resetWizard}
-        className="mt-2 rounded-full bg-gradient-to-r from-rose-500 to-rose-600 px-4 py-2 text-center font-medium text-white shadow transition-transform hover:-translate-y-0.5"
-      >
-        Reset progress
-      </button>
+    <aside className="context-sidebar">
+      <span className="eyebrow">YOUR WORKSPACE</span>
+      <h2>Investment brief</h2>
+      <dl>
+        <div><dt>Capital to allocate</dt><dd>{ready ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(state.questionnaire.investment_amount) : "…"}</dd></div>
+        <div><dt>Time horizon</dt><dd>{ready ? state.questionnaire.investment_timeline : "…"}</dd></div>
+        <div><dt>Risk profile</dt><dd>{ready ? state.riskLevel ?? "Not assessed" : "…"}</dd></div>
+        <div><dt>Sector focus</dt><dd className="brief-sectors">{ready && state.industryFocus.length ? state.industryFocus.join(", ") : "All sectors"}</dd></div>
+      </dl>
+      <p className="caption">Your inputs are saved in this browser.</p>
+      <button className="text-button" onClick={() => { state.resetWizard(); router.push("/"); }}>Start a new brief <span aria-hidden="true">↗</span></button>
+      <div className="sidebar-footnote"><span className="eyebrow">RESEARCH TOOL</span><p>Historical performance does not predict future returns. All allocations are illustrative.</p></div>
     </aside>
   );
 }

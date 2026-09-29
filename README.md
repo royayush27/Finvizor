@@ -1,90 +1,82 @@
-# Finvizor Pro
+# Finvizor
 
-AI-powered portfolio construction: a machine-learning return-prediction ensemble (RandomForest +
-GradientBoosting + XGBoost, blended with per-symbol ARIMA forecasts), live FRED economic data, and
-multi-method news-sentiment risk filtering, wrapped in a 5-step portfolio wizard.
+A US equity research workspace built with FastAPI and Next.js. Choose sectors, complete a risk questionnaire, then screen stocks or enter your own weights. Reports show historical returns, covariance-based portfolio volatility, allocation charts and CSV exports.
 
-Originally built as **US Finvizor Pro** for the **9th Mirae Asset Securities AI Festival** (2025) as
-a single-file Streamlit app. This version is a full rewrite: a **FastAPI** backend exposing the
-ML/data pipeline as a REST API, and a **Next.js + TypeScript + Tailwind** frontend, so the wizard UI
-no longer full-page-reruns on every click and the app can be deployed like a normal web service.
+## Run locally
 
-> Educational project only. Nothing here is financial advice -- always consult a qualified financial
-> advisor before making investment decisions.
+Backend (Python 3.11 or 3.12 recommended):
 
-## Architecture
-
-```
-backend/    FastAPI service -- ML models, FRED/yfinance/NewsAPI integration, portfolio scoring
-frontend/   Next.js app -- 5-step wizard UI, polls the backend for async portfolio generation
-```
-
-The original prototype trained ML models and pulled ~60 stocks' worth of data synchronously inside
-a single Streamlit script run, which is a large part of why it felt slow. Here, portfolio generation
-runs as a background job on the backend (`POST /api/portfolio/generate` returns a job ID immediately;
-the frontend polls `GET /api/portfolio/jobs/{id}` and shows real progress) instead of freezing the UI.
-
-## Running locally
-
-### Backend
-
-```bash
+```powershell
 cd backend
 python -m venv .venv
-.venv\Scripts\activate        # Windows; use `source .venv/bin/activate` on macOS/Linux
+.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-cp .env.example .env          # fill in your own API keys -- see below
-uvicorn app.main:app --reload
+Copy-Item .env.example .env
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-The API is now at `http://localhost:8000` (interactive docs at `/docs`).
+Frontend in a second terminal:
 
-### Frontend
-
-```bash
+```powershell
 cd frontend
-npm install
-cp .env.local.example .env.local
+npm ci
+Copy-Item .env.local.example .env.local
 npm run dev
 ```
 
-The app is now at `http://localhost:3000`.
+Open http://localhost:3000. The browser calls same-origin `/api` routes, which Next.js forwards to `API_BASE_URL` (default `http://127.0.0.1:8000`). This also avoids browser CORS and remote-device localhost mistakes. In a hosted deployment, set `API_BASE_URL` to the backend's internal URL and rebuild the frontend. The old `NEXT_PUBLIC_API_BASE_URL` setting is accepted as a server-side fallback.
 
-### API keys
+API documentation: http://127.0.0.1:8000/docs.
 
-All keys are optional but unlock more of the app -- get your own free keys, nothing is bundled:
+## What the numbers mean
 
-| Key                    | Used for                                  | Get one at                                              |
-|-------------------------|--------------------------------------------|----------------------------------------------------------|
-| `FRED_API_KEY`          | Macro indicators (falls back to yfinance)  | https://fred.stlouisfed.org/docs/api/api_key.html         |
-| `NEWS_API_KEY`          | News-sentiment stock filtering             | https://newsapi.org/                                      |
-| `NAVER_CLOVA_API_KEY`   | Optional Korean-language AI portfolio summary | https://www.ncloud.com/product/aiService/clovaStudio   |
+- **Screened allocation:** a transparent heuristic ranks stocks using trailing returns, volatility, dividend yield and company size. The questionnaire score adjusts the return/risk emphasis. Conservative risk settings additionally exclude stocks with trailing annualized volatility of 20% or more. This is an all-equity screen; it does not establish suitability or guarantee capital preservation.
+- **Universe:** at most 60 stocks per request, drawn in sector round-robin order with selected sectors prioritized. This is a curated universe, not the whole US market. Provider-reported sectors determine the final inclusion/exclusion rules.
+- **Weights:** positive scores are normalized and capped. A fully invested portfolio with fewer than ten holdings cannot satisfy a 10% cap, so the effective cap is raised to `1 / holding_count` and disclosed in the report. Unavailable candidates can reduce the requested count; that is also disclosed.
+- **Manual allocations:** 1–30 unique symbols with strictly positive weights totaling 100%. If any holding cannot be loaded, generation fails instead of silently dropping it. Manual selections bypass sector, news and risk screens.
+- **Trailing portfolio return:** weighted buy-and-hold total return over up to 252 shared trading sessions, using adjusted price histories. Individual holding returns use their own trailing-year window. This is an illustration using today's selected holdings, not an out-of-sample strategy backtest.
+- **Volatility:** `sqrt(w.T @ covariance(daily_returns) @ w * 252) * 100`, using dates shared by all holdings. This assumes fixed daily weights and captures cross-stock covariance. It is not the weighted average of individual volatilities.
+- **Prices:** latest available closing data, potentially delayed. Allocations assume fractional shares and omit fees, taxes and transaction costs.
+- **Risk score:** a questionnaire heuristic, recomputed on the server. It is not a calibrated probability of loss.
 
-**Never commit `.env` or `.env.local`.** Both are gitignored; only the `.env.example` /
-`.env.local.example` templates (placeholders only) are checked in.
+The old ML/ARIMA code remains in `backend/app/services/ml_predictor.py` for research, but is **not used by portfolio generation**. It trained on trailing returns and predicted on those same stocks, so its output could not support claims of future-return accuracy. The active pipeline deliberately reports historical results. A future forecasting model requires dated training samples, forward targets, leakage-free preprocessing and held-out evaluation before activation.
 
-## What changed from the original prototype
+For API compatibility the legacy fields `expected_annual_return` and `predicted_return` remain; their values are historical percentages. `return_basis: "historical"`, `methodology`, `data_as_of`, `position_cap` and `warnings` make this explicit. The UI and CSV use historical labels.
 
-The original 4,234-line Streamlit script had two hardcoded, leaked API keys (one of which also had a
-logic bug that made it silently override a correctly-configured `secrets.toml`), ~500 lines of dead
-code (an entire unused bond/fund portfolio engine, a never-routed Settings page), and several real
-bugs that would crash the app in production paths (undefined functions/variables reached only under
-specific failure conditions) plus a couple of quieter ones (an ARIMA call using a removed
-`statsmodels` API, and a risk-questionnaire scoring table whose keys never matched the UI's actual
-option strings, silently ignoring the user's stated financial goal). This rewrite fixes all of them
-during the port -- see inline docstrings in `backend/app/services/*.py` for exactly what changed and
-why, function by function.
+## Optional integrations
 
-The legitimately solid part of the original -- the ML ensemble, the FRED integration, and the
-financial-math utilities (RSI/MACD/Bollinger/beta/drawdown/VaR/CVaR) -- carried over with the same
-logic, just decoupled from Streamlit and given proper types.
+Keys are loaded from `backend/.env`; never commit them.
 
-## Testing
+| Key | Purpose |
+| --- | --- |
+| `NEWS_API_KEY` | Optional headline sentiment screening. Missing coverage is unknown, not a positive or neutral signal. |
+| `FRED_API_KEY` | Economic-data endpoint, with labeled market-data proxies when unavailable. |
+| `NAVER_CLOVA_API_KEY` | Optional explanation of a generated report. |
 
-```bash
+ESG and target-return/volatility constraints are rejected rather than silently ignored, since the application has no verified ESG dataset or target optimizer. News sentiment is a keyword/model heuristic and is not a verified risk assessment.
+
+## Validation
+
+```powershell
 cd backend
-pytest
+.venv\Scripts\python.exe -m pytest -q
 ```
 
-Covers the pure-function services (financial math, portfolio scoring, risk scoring) including a
-regression test for the financial-goal scoring bug mentioned above.
+```powershell
+cd frontend
+npm run build
+# With both servers running and Chrome installed:
+node scripts/browser-smoke.mjs
+```
+
+The browser smoke test exercises sector selection, risk scoring, live manual portfolio generation, chart rendering and desktop/mobile overflow. It writes screenshots to the ignored `.artifacts/` directory. Set `CHROME_PATH` for a non-default Chrome installation. It uses live Yahoo data and can fail if the provider is unavailable.
+
+## Deployment limits
+
+Run the API with **one worker**. Jobs currently live in process memory: restart loses job status and server CSV exports; the browser retains its last report. Before a multi-worker or public deployment, use a durable shared job store/queue, authentication, rate limits and provider quotas. External provider failures are surfaced rather than replaced with invented market data.
+
+## Design
+
+Warm paper, dark green, serif headings and compact research tables replace gradient-heavy cards and decorative emoji. The direction follows the relevant recommendations in [Mateusz Sikora's design article](https://sikora.software/blog/ai-website-design), with emphasis on content, hierarchy and clear product language.
+
+Educational research only. No trades are placed.

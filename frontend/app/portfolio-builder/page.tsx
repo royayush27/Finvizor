@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError, pollJobUntilDone } from "@/lib/api";
 import { useWizardStore } from "@/lib/store";
 import type { ManualHolding, NewsRiskTolerance, PortfolioMode } from "@/lib/types";
@@ -24,6 +24,7 @@ export default function PortfolioBuilderPage() {
   const riskScore = useWizardStore((s) => s.riskScore);
   const setActiveJob = useWizardStore((s) => s.setActiveJob);
   const setPortfolio = useWizardStore((s) => s.setPortfolio);
+  const activeJob = useWizardStore((s) => s.activeJob);
 
   const [mode, setMode] = useState<PortfolioMode>("ai_optimized");
   const [numStocks, setNumStocks] = useState(10);
@@ -34,6 +35,32 @@ export default function PortfolioBuilderPage() {
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  const pendingJobId = activeJob && ["pending", "running"].includes(activeJob.status) ? activeJob.job_id : null;
+  useEffect(() => {
+    if (!pendingJobId) return;
+    const controller = new AbortController();
+    setGenerating(true);
+    pollJobUntilDone(pendingJobId, (update) => {
+      setProgress(update.progress);
+      setProgressMessage(update.message ?? "");
+    }, { signal: controller.signal }).then((job) => {
+      if (controller.signal.aborted) return;
+      setActiveJob(job);
+      if (job.status === "completed" && job.result) {
+        setPortfolio(job.result);
+        router.push("/results");
+      } else {
+        setError(job.error ?? "Portfolio generation failed.");
+      }
+    }).catch((e) => {
+      if (controller.signal.aborted) return;
+      setError(e instanceof Error ? e.message : "Unable to check job progress.");
+      // Expired jobs cannot resume; transient failures can be retried on this page.
+      if (e instanceof ApiError && e.status === 404) setActiveJob(null);
+    }).finally(() => { if (!controller.signal.aborted) setGenerating(false); });
+    return () => controller.abort();
+  }, [pendingJobId, router, setActiveJob, setPortfolio]);
 
   const manualTotalWeight = Object.values(manualSelection).reduce((sum, w) => sum + w, 0);
 
@@ -62,7 +89,11 @@ export default function PortfolioBuilderPage() {
         setError("Select at least one stock.");
         return;
       }
-      if (Math.abs(manualTotalWeight - 100) > 0.5) {
+      if (symbols.some((symbol) => !Number.isFinite(manualSelection[symbol]) || manualSelection[symbol] <= 0)) {
+        setError("Each selected stock needs a weight greater than zero.");
+        return;
+      }
+      if (Math.abs(manualTotalWeight - 100) > 0.0001) {
         setError("Weights must sum to 100%.");
         return;
       }
@@ -87,21 +118,10 @@ export default function PortfolioBuilderPage() {
         manual_holdings: manualHoldings,
       });
 
-      const finalJob = await pollJobUntilDone(job.job_id, (update) => {
-        setActiveJob(update);
-        setProgress(update.progress);
-        setProgressMessage(update.message ?? "");
-      });
-
-      if (finalJob.status === "completed" && finalJob.result) {
-        setPortfolio(finalJob.result);
-        router.push("/results");
-      } else {
-        setError(finalJob.error ?? "Portfolio generation failed.");
-      }
+      setActiveJob(job);
+      setPortfolio(null);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not reach the backend. Is it running?");
-    } finally {
+      setError(e instanceof Error ? e.message : "Could not reach the backend. Is it running?");
       setGenerating(false);
     }
   }
@@ -110,8 +130,8 @@ export default function PortfolioBuilderPage() {
     <div className="flex flex-col gap-8">
       <div>
         <h1 className="text-3xl font-bold">Portfolio Builder</h1>
-        <p className="text-slate-500 dark:text-slate-400">
-          Let the AI build a portfolio for you, or pick your own holdings.
+        <p className="text-slate-500 ">
+          Screen stocks using historical data, or set an allocation of your own.
         </p>
       </div>
 
@@ -119,20 +139,22 @@ export default function PortfolioBuilderPage() {
         {(["ai_optimized", "user_defined"] as PortfolioMode[]).map((m) => (
           <button
             key={m}
+            disabled={generating}
+            aria-pressed={mode === m}
             onClick={() => setMode(m)}
-            className={`flex-1 rounded-xl border px-4 py-3 text-sm font-medium transition-colors ${
+            className={`flex-1 rounded-md border px-4 py-3 text-sm font-medium transition-colors ${
               mode === m
-                ? "border-transparent bg-brand-gradient-soft text-white shadow-lg shadow-indigo-500/30"
-                : "border-slate-200 dark:border-slate-800"
+                ? "border-transparent bg-emerald-900 text-white  "
+                : "border-slate-200 "
             }`}
           >
-            {m === "ai_optimized" ? "AI-Optimized Portfolio" : "User-Defined Portfolio"}
+            {m === "ai_optimized" ? "Screened allocation" : "Choose your holdings"}
           </button>
         ))}
       </div>
 
       {mode === "ai_optimized" ? (
-        <InfoCard title="AI-Optimized Settings">
+        <InfoCard title="Screening settings">
           <div className="flex flex-col gap-4">
             <label className="flex flex-col gap-2">
               <span className="text-sm font-semibold">Number of stocks: {numStocks}</span>
@@ -147,7 +169,7 @@ export default function PortfolioBuilderPage() {
             <label className="flex flex-col gap-2">
               <span className="text-sm font-semibold">News risk tolerance</span>
               <select
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900"
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2  "
                 value={newsRiskTolerance}
                 onChange={(e) => setNewsRiskTolerance(e.target.value as NewsRiskTolerance)}
               >
@@ -167,8 +189,8 @@ export default function PortfolioBuilderPage() {
                 onClick={() => toggleManualSymbol(symbol)}
                 className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
                   symbol in manualSelection
-                    ? "border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300"
-                    : "border-slate-200 dark:border-slate-800"
+                    ? "border-emerald-500 bg-emerald-50 text-emerald-700  "
+                    : "border-slate-200 "
                 }`}
               >
                 {symbol}
@@ -185,7 +207,7 @@ export default function PortfolioBuilderPage() {
                     type="number"
                     min={0}
                     max={100}
-                    className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1 text-right dark:border-slate-700 dark:bg-slate-900"
+                    className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1 text-right  "
                     value={manualSelection[symbol]}
                     onChange={(e) =>
                       setManualSelection((prev) => ({ ...prev, [symbol]: Number(e.target.value) }))
@@ -194,7 +216,7 @@ export default function PortfolioBuilderPage() {
                   <span>%</span>
                 </label>
               ))}
-              <p className={`text-sm font-medium ${Math.abs(manualTotalWeight - 100) > 0.5 ? "text-rose-500" : "text-emerald-600"}`}>
+              <p className={`text-sm font-medium ${Math.abs(manualTotalWeight - 100) > 0.0001 ? "text-rose-500" : "text-emerald-600"}`}>
                 Total: {manualTotalWeight.toFixed(1)}%
               </p>
             </div>
@@ -204,15 +226,15 @@ export default function PortfolioBuilderPage() {
 
       {generating && (
         <InfoCard>
-          <p className="mb-2 text-sm font-medium text-slate-600 dark:text-slate-300">{progressMessage}</p>
-          <div className="h-2 w-full rounded-full bg-slate-200 dark:bg-slate-800">
-            <div className="h-2 rounded-full bg-brand-gradient-soft transition-all" style={{ width: `${progress}%` }} />
+          <p role="status" className="mb-2 text-sm font-medium text-slate-600 ">{progressMessage}</p>
+          <div className="h-2 w-full rounded bg-slate-200 ">
+            <div className="h-2 rounded bg-emerald-900 transition-all" style={{ width: `${progress}%` }} />
           </div>
         </InfoCard>
       )}
 
       {error && (
-        <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
+        <div className="rounded-md border border-red-300 bg-red-50 px-4 py-3 text-red-700   ">
           {error}
         </div>
       )}
@@ -221,7 +243,7 @@ export default function PortfolioBuilderPage() {
         <button
           onClick={handleGenerate}
           disabled={generating}
-          className="rounded-full bg-brand-gradient-soft px-8 py-3 font-semibold text-white shadow-lg shadow-indigo-500/30 transition-transform hover:-translate-y-0.5 disabled:opacity-60"
+          className="rounded bg-emerald-900 px-8 py-3 font-semibold text-white   transition-transform  disabled:opacity-60"
         >
           {generating ? "Generating..." : "Generate Portfolio →"}
         </button>

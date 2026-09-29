@@ -23,7 +23,7 @@ async def get_news_sentiment(symbol: str, settings: Settings = Depends(get_setti
     return NewsArticleSentiment(
         symbol=analysis.symbol,
         overall_sentiment=analysis.average_sentiment,
-        risk_level=analysis.risk_level if analysis.risk_level != "UNKNOWN" else "NONE",
+        risk_level=analysis.risk_level,
         total_articles=analysis.total_articles,
         summary=summary,
     )

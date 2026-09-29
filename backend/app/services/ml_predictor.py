@@ -38,6 +38,7 @@ from statsmodels.tsa.arima.model import ARIMA
 from app.models.schemas import EconomicIndicator
 from app.services.financial_calcs import calculate_macd, perform_adf_test
 from app.services.stock_universe import StockRecord
+from app.services.yf_session import get_yf_session
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +135,7 @@ class MLStockPredictor:
 
         for stock in stocks:
             try:
-                hist = yf.Ticker(stock.symbol).history(period="5y")
+                hist = yf.Ticker(stock.symbol, session=get_yf_session()).history(period="5y")
                 if hist.empty or len(hist) < 100:
                     logger.warning(f"Insufficient historical data for {stock.symbol}. Skipping feature prep.")
                     continue

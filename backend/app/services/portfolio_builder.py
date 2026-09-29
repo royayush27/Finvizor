@@ -1,18 +1,7 @@
-"""Portfolio construction: scoring, filtering, and weight optimization.
+"""Historical stock screening and bounded weight allocation.
 
-Ported from `generate_personalized_portfolio()` -- the real engine behind
-both the AI-Optimized portfolio flow and the Results page in the original
-(it was called from both places, silently regenerating the portfolio a
-second time on every visit to Results). Scoring formula, sector-alias
-mapping, risk-tier volatility filters, and the bounded position-cap
-redistribution loop are all carried over unchanged -- this logic was
-correct, just wrapped in `st.warning`/`st.error` calls instead of returning
-errors, and dependent on Streamlit session state instead of function
-arguments.
-
-This module never touches Streamlit or any UI framework: it raises
-`PortfolioGenerationError` on failure conditions the original reported via
-`st.error`, and returns typed dataclasses/Pydantic models otherwise.
+Risk preference affects the heuristic score. This is not a validated
+forecast or a target-return optimizer. Statistics use shared daily history.
 """
 from __future__ import annotations
 
@@ -26,11 +15,13 @@ import numpy as np
 
 from app.models.schemas import NewsFilteringSummary, PortfolioResult, StockHolding
 from app.services.stock_universe import StockRecord
+from app.services.portfolio_metrics import historical_metrics
 
 logger = logging.getLogger(__name__)
 
 SECTOR_ALIAS_MAP: Dict[str, List[str]] = {
-    "Technology": ["Technology", "Communication Services"],
+    "Technology": ["Technology"],
+    "Communication Services": ["Communication Services"],
     "Healthcare": ["Healthcare"],
     "Financials": ["Financials", "Financial Services"],
     "Consumer Discretionary": ["Consumer Discretionary", "Consumer Cyclical"],
@@ -64,10 +55,6 @@ def _apply_risk_volatility_filter(candidates: List[_Candidate], risk_tolerance: 
 
 
 def _num_stocks_cap(risk_tolerance: str, requested: int) -> int:
-    if "Very Low Risk" in risk_tolerance or "Low Risk" in risk_tolerance:
-        return min(requested, 15)
-    if "High Risk" in risk_tolerance or "Very High Risk" in risk_tolerance:
-        return min(requested, 8)
     return requested
 
 
@@ -82,11 +69,16 @@ def generate_portfolio(
     num_stocks_target: int = 10,
     max_single_position_pct: float = 0.10,
     news_summary: Optional[NewsFilteringSummary] = None,
+    exclude_industries: Optional[List[str]] = None,
 ) -> PortfolioResult:
     if not stocks:
         raise PortfolioGenerationError("No stock data available for portfolio generation.")
 
     candidates = [_Candidate(record=s, predicted_return=predicted_returns.get(s.symbol, 0.0)) for s in stocks]
+
+    if exclude_industries:
+        excluded = {sector for focus in exclude_industries for sector in SECTOR_ALIAS_MAP.get(focus, [focus])}
+        candidates = [c for c in candidates if c.record.sector not in excluded]
 
     if news_rejected_symbols:
         candidates = [c for c in candidates if c.record.symbol not in news_rejected_symbols]
@@ -105,11 +97,12 @@ def generate_portfolio(
     if not candidates:
         raise PortfolioGenerationError("No stocks match your risk tolerance criteria after filtering.")
 
+    risk_fraction = min(1.0, max(0.0, risk_score / 100))
     for c in candidates:
         market_cap = max(c.record.market_cap, 1e6)
         c.score = (
-            max(0.0, c.predicted_return) * 0.4
-            + (100 - c.record.volatility_1y) * 0.2
+            max(0.0, c.predicted_return) * (0.15 + 0.25 * risk_fraction)
+            + max(0.0, 100 - c.record.volatility_1y) * (0.4 - 0.2 * risk_fraction)
             + c.record.dividend_yield * 0.1
             + float(np.log(market_cap)) * 0.3
         )
@@ -127,7 +120,17 @@ def generate_portfolio(
     else:
         weights = np.full(len(selected), 1.0 / len(selected))
 
-    # Bounded cap-and-redistribute: no single position exceeds max_single_position_pct.
+    # A fully invested N-stock portfolio cannot have a cap below 1/N.
+    # Make the effective limit explicit rather than silently breaking it by renormalizing.
+    warnings = []
+    if not 0 < max_single_position_pct <= 1:
+        raise PortfolioGenerationError("Position cap must be between zero and one.")
+    effective_cap = max(max_single_position_pct, 1.0 / len(selected))
+    if effective_cap > max_single_position_pct:
+        warnings.append(f"With {len(selected)} holdings, the position limit is {effective_cap:.1%}; a 10% limit requires at least 10 holdings.")
+    if len(selected) < num_stocks_target:
+        warnings.append(f"Only {len(selected)} of the requested {num_stocks_target} stocks passed the available data and screening criteria.")
+    max_single_position_pct = effective_cap
     for _ in range(10):
         over_limit = weights > max_single_position_pct
         if not over_limit.any():
@@ -161,8 +164,9 @@ def generate_portfolio(
         ))
         sector_totals[record.sector] = sector_totals.get(record.sector, 0.0) + float(weight)
 
-    expected_annual_return = sum(h.weight * (h.predicted_return or 0.0) for h in holdings)
-    portfolio_volatility = sum(h.weight * h.volatility for h in holdings)
+    expected_annual_return, portfolio_volatility, data_as_of = historical_metrics(
+        [c.record for c in selected], [h.weight for h in holdings]
+    )
 
     return PortfolioResult(
         portfolio_id=str(uuid.uuid4()),
@@ -174,4 +178,7 @@ def generate_portfolio(
         holdings=holdings,
         sector_allocation=sector_totals,
         news_filtering_summary=news_summary,
+        warnings=warnings,
+        data_as_of=data_as_of,
+        position_cap=effective_cap,
     )

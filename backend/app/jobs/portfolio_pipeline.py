@@ -2,8 +2,7 @@
 
 Runs synchronously inside a thread-pool worker (see api/routes/portfolio.py)
 and reports progress through JobManager as it goes -- this is what lets the
-frontend show real progress instead of a frozen page while ~60 yfinance
-pulls + ML training + ARIMA fitting happen.
+frontend show real progress while market-data requests and screening run.
 """
 from __future__ import annotations
 
@@ -12,13 +11,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, List
 
-import pandas as pd
-
 from app.core.config import Settings
 from app.jobs.job_manager import job_manager
 from app.models.schemas import NewsFilteringSummary, PortfolioRequest, PortfolioResult, StockHolding
-from app.services import economic_data, portfolio_builder, stock_universe
-from app.services.ml_predictor import MLStockPredictor
+from app.services import portfolio_builder, stock_universe
+from app.services.portfolio_metrics import historical_metrics
+from app.services.risk_scoring import calculate_risk_score
 from app.services.news_analyzer import NewsAnalyzer
 from app.services.stock_universe import StockRecord, build_stock_record, fetch_stock_data_with_retry, get_spy_returns
 
@@ -28,6 +26,7 @@ logger = logging.getLogger(__name__)
 def run_portfolio_job(job_id: str, request: PortfolioRequest, settings: Settings) -> None:
     try:
         job_manager.mark_running(job_id, "Starting portfolio generation...")
+        request = request.model_copy(update={"risk_score": calculate_risk_score(request.questionnaire)})
         if request.mode == "user_defined":
             result = _run_user_defined(job_id, request)
         else:
@@ -38,20 +37,17 @@ def run_portfolio_job(job_id: str, request: PortfolioRequest, settings: Settings
         job_manager.mark_failed(job_id, str(e))
     except Exception as e:
         logger.exception(f"Portfolio generation job {job_id} failed unexpectedly")
-        job_manager.mark_failed(job_id, f"Unexpected error: {e}")
+        job_manager.mark_failed(job_id, "Portfolio data could not be processed. Please retry; check the server log if the problem persists.")
 
 
 def _run_ai_optimized(job_id: str, request: PortfolioRequest, settings: Settings) -> PortfolioResult:
-    job_manager.update_progress(job_id, 5, "Loading economic indicators...")
-    indicators = economic_data.load_economic_snapshot(settings.fred_api_key)
-
     job_manager.update_progress(job_id, 10, "Loading stock universe...")
 
     def universe_progress(done: int, total: int, symbol: str) -> None:
         pct = 10 + (done / total) * 30 if total else 10
         job_manager.update_progress(job_id, pct, f"Loading {symbol} ({done}/{total})...")
 
-    records, failed = stock_universe.load_stock_universe(limit=60, progress_callback=universe_progress)
+    records, failed = stock_universe.load_stock_universe(limit=60, progress_callback=universe_progress, industry_focus=request.industry_focus, exclude_industries=request.exclude_industries)
     if not records:
         raise portfolio_builder.PortfolioGenerationError(
             "Unable to load any stock data. This may be a temporary Yahoo Finance rate-limit issue -- try again shortly."
@@ -80,30 +76,15 @@ def _run_ai_optimized(job_id: str, request: PortfolioRequest, settings: Settings
             total_articles=outcome.total_articles,
         )
         if not passed_records:
-            raise portfolio_builder.PortfolioGenerationError("All stocks were filtered out by news sentiment.")
+            raise portfolio_builder.PortfolioGenerationError("No stocks passed the news screen. Coverage may be unavailable, or the available headlines exceed your risk tolerance.")
     else:
         job_manager.update_progress(job_id, 60, "Skipping news filtering (no NewsAPI key configured)...")
 
-    job_manager.update_progress(job_id, 65, "Engineering ML features...")
-    predictor = MLStockPredictor()
-    features_df = predictor.prepare_features(passed_records, indicators)
-    if features_df.empty:
-        raise portfolio_builder.PortfolioGenerationError("Failed to prepare features for portfolio generation.")
-
-    job_manager.update_progress(job_id, 80, "Training ML ensemble...")
-    records_by_symbol: Dict[str, StockRecord] = {r.symbol: r for r in passed_records}
-    targets = pd.Series([records_by_symbol[s].one_year_return for s in features_df["symbol"]])
-    predictor.train(features_df, targets)
-
-    job_manager.update_progress(job_id, 90, "Generating predictions and building portfolio...")
-    _, confidence_intervals = predictor.predict_with_confidence(features_df)
-    predicted_returns = {ci["symbol"]: ci["prediction"] for ci in confidence_intervals}
-
-    features_symbols = set(features_df["symbol"])
-    candidate_records = [r for r in passed_records if r.symbol in features_symbols]
+    job_manager.update_progress(job_id, 85, "Screening historical returns and risk...")
+    predicted_returns = {r.symbol: r.one_year_return for r in passed_records}
 
     result = portfolio_builder.generate_portfolio(
-        stocks=candidate_records,
+        stocks=passed_records,
         predicted_returns=predicted_returns,
         investment_amount=request.questionnaire.investment_amount,
         risk_score=request.risk_score,
@@ -112,7 +93,12 @@ def _run_ai_optimized(job_id: str, request: PortfolioRequest, settings: Settings
         news_rejected_symbols=rejected_symbols,
         num_stocks_target=request.num_stocks,
         news_summary=news_summary,
+        exclude_industries=request.exclude_industries,
     )
+    if failed:
+        result.warnings.append(f"Market data was unavailable for {len(failed)} symbols; screening used the available stocks.")
+    if not settings.news_api_key:
+        result.warnings.append("News screening was not applied because the news service is unavailable.")
     job_manager.update_progress(job_id, 100, "Done")
     return result
 
@@ -123,17 +109,18 @@ def _run_user_defined(job_id: str, request: PortfolioRequest) -> PortfolioResult
 
     spy_returns = get_spy_returns()
     holdings: List[StockHolding] = []
+    records: List[StockRecord] = []
     total_weight = sum(h.weight for h in request.manual_holdings)
 
     for i, manual in enumerate(request.manual_holdings):
         job_manager.update_progress(job_id, (i / len(request.manual_holdings)) * 90, f"Loading {manual.symbol}...")
         ticker = fetch_stock_data_with_retry(manual.symbol)
         if ticker is None:
-            logger.warning(f"Could not load data for manually selected symbol {manual.symbol}; skipping.")
-            continue
+            raise portfolio_builder.PortfolioGenerationError(f"Could not load {manual.symbol}. Your allocation has not been changed. Please retry.")
         record = build_stock_record(manual.symbol, ticker, spy_returns)
         if record is None:
-            continue
+            raise portfolio_builder.PortfolioGenerationError(f"Insufficient history for {manual.symbol}. Your allocation has not been changed.")
+        records.append(record)
         normalized_weight = manual.weight / total_weight if total_weight else 0.0
         holdings.append(StockHolding(
             symbol=record.symbol,
@@ -154,8 +141,7 @@ def _run_user_defined(job_id: str, request: PortfolioRequest) -> PortfolioResult
     for h in holdings:
         sector_totals[h.sector] = sector_totals.get(h.sector, 0.0) + h.weight
 
-    expected_return = sum(h.weight * (h.predicted_return or 0.0) for h in holdings)
-    volatility = sum(h.weight * h.volatility for h in holdings)
+    expected_return, volatility, data_as_of = historical_metrics(records, [h.weight for h in holdings])
 
     job_manager.update_progress(job_id, 100, "Done")
 
@@ -169,4 +155,6 @@ def _run_user_defined(job_id: str, request: PortfolioRequest) -> PortfolioResult
         holdings=holdings,
         sector_allocation=sector_totals,
         news_filtering_summary=None,
+        data_as_of=data_as_of,
+        warnings=["Manual allocation: industry, risk and news screens are not applied."],
     )

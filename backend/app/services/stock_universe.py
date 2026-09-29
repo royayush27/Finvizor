@@ -42,6 +42,7 @@ from app.services.financial_calcs import (
     calculate_var_cvar,
     calculate_ytd_return,
 )
+from app.services.yf_session import get_yf_session
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,8 @@ def all_symbols() -> List[str]:
     flat: List[str] = []
     for tickers in SECTOR_UNIVERSE.values():
         flat.extend(tickers)
-    return sorted(set(flat))
+    # Round-robin preserves sector coverage when the caller limits the universe.
+    return list(dict.fromkeys(symbol for row in zip(*SECTOR_UNIVERSE.values()) for symbol in row))
 
 
 def determine_sector(symbol: str) -> str:
@@ -137,7 +139,7 @@ def safe_get_ratio(info: dict, primary_key: str, fallback_key: Optional[str], de
 def fetch_stock_data_with_retry(symbol: str, max_retries: int = 2, delay: float = 0.5) -> Optional[yf.Ticker]:
     for attempt in range(max_retries):
         try:
-            ticker = yf.Ticker(symbol)
+            ticker = yf.Ticker(symbol, session=get_yf_session())
             test_data = ticker.history(period="5d", interval="1d")
             if not test_data.empty:
                 return ticker
@@ -154,7 +156,7 @@ _spy_cache: TTLCache = TTLCache(maxsize=1, ttl=60 * 60 * 24)  # 1 day, mirrors o
 @cached(_spy_cache)
 def get_spy_returns() -> pd.Series:
     try:
-        spy_hist = yf.Ticker("SPY").history(period="5y")
+        spy_hist = yf.Ticker("SPY", session=get_yf_session()).history(period="5y")
         if spy_hist.empty:
             return pd.Series(dtype=float)
         return spy_hist["Close"].pct_change().dropna()
@@ -167,7 +169,7 @@ def build_stock_record(symbol: str, ticker: yf.Ticker, spy_returns: pd.Series) -
     hist_5y = ticker.history(period="5y", interval="1d")
     hist_1y = ticker.history(period="1y", interval="1d")
 
-    if hist_5y.empty or len(hist_5y) < 100:
+    if hist_5y.empty or len(hist_5y) < 253 or hist_1y.empty:
         logger.warning(f"Insufficient history for {symbol}")
         return None
 
@@ -181,6 +183,9 @@ def build_stock_record(symbol: str, ticker: yf.Ticker, spy_returns: pd.Series) -
 
     current_price = float(hist_5y["Close"].iloc[-1])
     returns_1d = hist_5y["Close"].pct_change().dropna()
+    if not np.isfinite(current_price) or current_price <= 0 or not np.isfinite(returns_1d).all():
+        logger.warning("Invalid price history for %s", symbol)
+        return None
 
     ytd_return = calculate_ytd_return(hist_1y)
     one_year_return = (
@@ -196,7 +201,9 @@ def build_stock_record(symbol: str, ticker: yf.Ticker, spy_returns: pd.Series) -
     rsi = calculate_rsi(hist_5y["Close"].tail(100))
     _, _, macd_histogram = calculate_macd(hist_5y["Close"])
 
-    dividend_yield = safe_get_ratio(info, "dividendYield", None, 0.0) * 100
+    # yfinance >=1.x returns dividendYield already as a percent (e.g. 2.5 for 2.5%),
+    # unlike the 0.2.x series which returned a fraction (0.025) -- no *100 here.
+    dividend_yield = safe_get_ratio(info, "dividendYield", None, 0.0)
     pe_ratio = safe_get_ratio(info, "trailingPE", "forwardPE", 15.0)
     debt_to_equity = safe_get_ratio(info, "debtToEquity", None, 50.0)
     roe = safe_get_ratio(info, "returnOnEquity", None, 0.1) * 100
@@ -205,9 +212,9 @@ def build_stock_record(symbol: str, ticker: yf.Ticker, spy_returns: pd.Series) -
     return StockRecord(
         symbol=symbol,
         name=info.get("longName", info.get("shortName", symbol)),
-        sector=determine_sector(symbol),
+        sector=info.get("sector") or determine_sector(symbol),
         industry=info.get("industry", "Unknown"),
-        market_cap=float(info.get("marketCap", 0) or 0),
+        market_cap=safe_get_ratio(info, "marketCap", None, 0.0),
         current_price=current_price,
         ytd_return=ytd_return,
         one_year_return=one_year_return,
@@ -233,6 +240,8 @@ def build_stock_record(symbol: str, ticker: yf.Ticker, spy_returns: pd.Series) -
 def load_stock_universe(
     limit: int = 60,
     progress_callback: ProgressCallback = None,
+    industry_focus: Optional[List[str]] = None,
+    exclude_industries: Optional[List[str]] = None,
 ) -> Tuple[List[StockRecord], List[str]]:
     """Load and enrich up to `limit` stocks from the sector universe.
 
@@ -241,7 +250,13 @@ def load_stock_universe(
     a real implementation of the graceful-degradation path the original
     prototype referenced but never defined.
     """
-    symbols_to_process = all_symbols()[:limit]
+    # Prioritize the selected sectors before applying the request budget.
+    # Actual provider sectors are checked again by portfolio_builder.
+    preferred = {s for sector in (industry_focus or []) for s in SECTOR_UNIVERSE.get(sector, [])}
+    ordered = all_symbols()
+    if preferred:
+        ordered = [s for s in ordered if s in preferred] + [s for s in ordered if s not in preferred]
+    symbols_to_process = ordered[:limit]
     spy_returns = get_spy_returns()
     if spy_returns.empty:
         logger.warning("Could not load SPY data for beta calculation; beta will default to 1.0.")

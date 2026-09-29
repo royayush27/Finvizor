@@ -2,22 +2,26 @@ import type { Metadata } from "next";
 import "./globals.css";
 import StepNav from "@/components/StepNav";
 import Sidebar from "@/components/Sidebar";
+import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Finvizor Pro | AI Portfolio Builder",
-  description: "AI-powered portfolio construction: ML return prediction, FRED economic data, and news-sentiment filtering.",
+  title: "Finvizor | Portfolio Research",
+  description: "Explore US equity allocations, historical returns, and portfolio risk.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>
-        <div className="mx-auto min-h-screen max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+        <a href="#main-content" className="skip-link">Skip to content</a>
+        <div className="app-shell">
+          <header className="masthead"><Link href="/" className="wordmark"><span className="brand-mark" aria-hidden="true">f.</span>finvizor<span className="wordmark-detail">RESEARCH</span></Link><span className="masthead-label">An independent view of your portfolio.</span><span className="market-label">US / USD</span></header>
           <StepNav />
-          <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_260px]">
-            <main>{children}</main>
+          <div className="workspace-grid">
+            <main id="main-content">{children}</main>
             <Sidebar />
           </div>
+          <footer className="app-footer"><span>Finvizor / Portfolio research</span><span>Educational use. No brokerage or trade execution.</span></footer>
         </div>
       </body>
     </html>
